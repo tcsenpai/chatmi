@@ -54,6 +54,9 @@
   let models = $state<string[]>([]);
   let model = $state("");
 
+  // Thinking (reasoning) toggle — on matches the API default.
+  let thinkingOn = $state(true);
+
   // A stored user message may be a JSON content-array (multimodal). Parse it into
   // { text, parts } for rendering; plain strings pass through as text.
   function parseContent(raw: string): { text: string; parts: Attachment[] } {
@@ -189,6 +192,7 @@
         content: text,
         attachments: sent.map(({ kind, mime, data }) => ({ kind, mime, data })),
         model: model || null,
+        thinking: thinkingOn,
       });
       // Register the live stream buffer; keyed by the real assistant id.
       streams = {
@@ -213,11 +217,16 @@
     localStorage.setItem("chatmi.model", model);
   }
 
+  function saveThinking() {
+    localStorage.setItem("chatmi.thinking", thinkingOn ? "1" : "0");
+  }
+
   onMount(async () => {
     await loadConversations();
 
     // Restore the saved model choice, then fill the picker from the endpoint.
     model = localStorage.getItem("chatmi.model") ?? "";
+    thinkingOn = localStorage.getItem("chatmi.thinking") !== "0";
     await listen<{ models: string[] }>("mimo-models", (e) => {
       models = e.payload.models;
     });
@@ -287,6 +296,10 @@
           <option value={m}>{m}</option>
         {/each}
       </select>
+      <label class="thinking-row" title="Toggle the model's reasoning (thinking) output">
+        <input type="checkbox" bind:checked={thinkingOn} onchange={saveThinking} />
+        <span>Thinking</span>
+      </label>
     </div>
   </aside>
 
@@ -445,6 +458,12 @@
     transition: border-color var(--transition);
   }
   .model-bar select:focus { outline: none; border-color: var(--color-primary); }
+  .thinking-row {
+    display: flex; align-items: center; gap: var(--space-2);
+    margin-top: var(--space-2); font-size: 0.85rem;
+    color: var(--color-text-secondary); cursor: pointer; user-select: none;
+  }
+  .thinking-row input { accent-color: var(--color-primary); }
 
   /* ---------- chat ---------- */
   .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }

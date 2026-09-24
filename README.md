@@ -78,8 +78,14 @@ src-tauri/      Rust core — window, SQLite persistence, sidecar bridge
 ## Status
 
 Chat with reasoning, local persistence, a model picker (fed by the endpoint's
-`/v1/models`, choice persisted across restarts), and image/audio input all work. Text-to-
-speech and voice, which the SDK supports, aren't wired up yet.
+`/v1/models`, choice persisted across restarts), a Thinking on/off toggle
+(`thinking.type`), and image/audio input all work. Text-to-speech and voice,
+which the SDK supports, aren't wired up yet.
+
+There is deliberately no "thinking effort" knob: the endpoint accepts but
+ignores both `reasoning_effort` and `thinking.budget_tokens` (verified
+empirically — no measurable effect on `reasoning_tokens` over 12+ samples),
+while `thinking.type` on/off is honored exactly.
 
 ## License
 

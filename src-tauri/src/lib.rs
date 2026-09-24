@@ -169,6 +169,7 @@ fn send_message(
     content: String,
     attachments: Option<Vec<Attachment>>,
     model: Option<String>,
+    thinking: Option<bool>,
 ) -> Result<String, String> {
     let attachments = attachments.unwrap_or_default();
 
@@ -262,8 +263,15 @@ fn send_message(
     // Write the request to the sidecar's stdin. An explicit model from the UI
     // wins; with none, the sidecar auto-picks (multimodal → mimo-v2.5).
     let mut req = serde_json::json!({ "id": assistant_id, "messages": history });
+    let mut opts = serde_json::Map::new();
     if let Some(model) = model {
-        req["opts"] = serde_json::json!({ "model": model });
+        opts.insert("model".into(), model.into());
+    }
+    if let Some(thinking) = thinking {
+        opts.insert("thinking".into(), thinking.into());
+    }
+    if !opts.is_empty() {
+        req["opts"] = serde_json::Value::Object(opts);
     }
     let line = format!("{}\n", req);
     {

@@ -10,7 +10,12 @@ type Request = {
   // endpoint exposes.
   action?: "chat" | "models";
   messages?: Message[];
-  opts?: { model?: string; system?: string; temperature?: number };
+  opts?: {
+    model?: string;
+    system?: string;
+    temperature?: number;
+    thinking?: boolean;
+  };
 };
 
 // The SDK appends "/v1/chat/completions" itself, so baseURL must NOT end in /v1.
@@ -65,6 +70,11 @@ async function handle(req: Request): Promise<void> {
       model: model as never,
       system: req.opts?.system,
       temperature: req.opts?.temperature,
+      // SDK defaults thinking to enabled; honor an explicit user choice.
+      thinking:
+        req.opts?.thinking === undefined
+          ? undefined
+          : { type: req.opts.thinking ? "enabled" : "disabled" },
     });
     for await (const part of stream) {
       emit({ id: req.id, type: part.type, text: part.text });
