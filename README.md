@@ -49,20 +49,19 @@ include the `/v1` suffix; the SDK adds the path itself.
 ## Run
 
 ```sh
-bun run sidecar:build     # compile the Node sidecar to a native binary
-bun run tauri dev
+bun run tauri:dev     # builds the sidecar, then starts Tauri in dev mode
 ```
 
-`sidecar:build` produces `src-tauri/binaries/chatmi-sidecar-<target-triple>`,
-which Tauri picks up as a bundled binary. **Rerun it whenever you change
-anything under `sidecar/`** — the running app uses the compiled binary, not the
-TypeScript source.
+`tauri:dev`/`tauri:build` run `sidecar:build` first, which produces
+`src-tauri/binaries/chatmi-sidecar-<target-triple>` — Tauri picks that up as a
+bundled binary. **Rerun `bun run sidecar:build` (and restart) whenever you
+change anything under `sidecar/`** — the running app uses the compiled binary,
+not the TypeScript source.
 
 ## Build
 
 ```sh
-bun run sidecar:build
-bun run tauri build
+bun run tauri:build
 ```
 
 Bundles land in `src-tauri/target/release/bundle/`.

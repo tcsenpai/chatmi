@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "sidecar:build": "bun run sidecar/build.ts"
+    "sidecar:build": "bun run sidecar/build.ts",
+    "tauri:dev": "bun run sidecar:build && tauri dev",
+    "tauri:build": "bun run sidecar:build && tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
