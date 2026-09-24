@@ -25,10 +25,11 @@ Svelte webview  ──IPC──►  Rust core  ──stdin──►  Node sideca
                           SQLite
 ```
 
-The sidecar speaks JSON-lines: one request per line in, one chunk per line out
-(`reasoning`, `content`, `done`, `error`). Multimodal messages are the same
-shape with image/audio parts added, so nothing structural changes as features
-grow.
+The sidecar speaks JSON-lines: one request per line in (a chat, or `action:
+"models"` to list the models the endpoint exposes), one chunk per line out
+(`reasoning`, `content`, `models`, `done`, `error`). Multimodal messages are the
+same shape with image/audio parts added, so nothing structural changes as
+features grow.
 
 ## Requirements
 
@@ -76,7 +77,8 @@ src-tauri/      Rust core — window, SQLite persistence, sidecar bridge
 
 ## Status
 
-Chat with reasoning, local persistence, and image/audio input all work. Text-to-
+Chat with reasoning, local persistence, a model picker (fed by the endpoint's
+`/v1/models`, choice persisted across restarts), and image/audio input all work. Text-to-
 speech and voice, which the SDK supports, aren't wired up yet.
 
 ## License

@@ -1,7 +1,7 @@
 // chatmi core: SQLite persistence + Node sidecar bridge.
 // The sidecar streams MiMo output; we forward each chunk to the webview as an
 // event and persist the finished assistant message to SQLite on "done".
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -67,7 +67,7 @@ fn init_db(conn: &Connection) {
 
 #[tauri::command]
 fn list_conversations(state: State<AppState>) -> Result<Vec<Conversation>, String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     let mut stmt = db
         .prepare("SELECT id, title, created_at FROM conversations ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
@@ -90,7 +90,7 @@ fn new_conversation(state: State<AppState>) -> Result<Conversation, String> {
         title: "New chat".to_string(),
         created_at: now(),
     };
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.execute(
         "INSERT INTO conversations (id, title, created_at) VALUES (?1, ?2, ?3)",
         rusqlite::params![conv.id, conv.title, conv.created_at],
@@ -101,7 +101,7 @@ fn new_conversation(state: State<AppState>) -> Result<Conversation, String> {
 
 #[tauri::command]
 fn delete_conversation(state: State<AppState>, id: String) -> Result<(), String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     db.execute("DELETE FROM messages WHERE conversation_id = ?1", [&id])
         .map_err(|e| e.to_string())?;
     db.execute("DELETE FROM conversations WHERE id = ?1", [&id])
@@ -111,7 +111,7 @@ fn delete_conversation(state: State<AppState>, id: String) -> Result<(), String>
 
 #[tauri::command]
 fn get_messages(state: State<AppState>, conversation_id: String) -> Result<Vec<ChatMessage>, String> {
-    let db = state.db.lock().unwrap();
+    let db = state.db.lock();
     let mut stmt = db
         .prepare(
             "SELECT id, conversation_id, role, content, reasoning, created_at
@@ -168,6 +168,7 @@ fn send_message(
     conversation_id: String,
     content: String,
     attachments: Option<Vec<Attachment>>,
+    model: Option<String>,
 ) -> Result<String, String> {
     let attachments = attachments.unwrap_or_default();
 
@@ -199,7 +200,7 @@ fn send_message(
 
     // Build the full history to send, and persist the user message + title.
     let history: Vec<serde_json::Value> = {
-        let db = state.db.lock().unwrap();
+        let db = state.db.lock();
         db.execute(
             "INSERT INTO messages (id, conversation_id, role, content, reasoning, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -253,16 +254,20 @@ fn send_message(
 
     // Reserve the assistant message id and register it as pending.
     let assistant_id = uuid::Uuid::new_v4().to_string();
-    state.pending.lock().unwrap().insert(
+    state.pending.lock().insert(
         assistant_id.clone(),
         (conversation_id.clone(), String::new(), String::new()),
     );
 
-    // Write the request to the sidecar's stdin.
-    let req = serde_json::json!({ "id": assistant_id, "messages": history });
+    // Write the request to the sidecar's stdin. An explicit model from the UI
+    // wins; with none, the sidecar auto-picks (multimodal → mimo-v2.5).
+    let mut req = serde_json::json!({ "id": assistant_id, "messages": history });
+    if let Some(model) = model {
+        req["opts"] = serde_json::json!({ "model": model });
+    }
     let line = format!("{}\n", req);
     {
-        let mut guard = state.sidecar.lock().unwrap();
+        let mut guard = state.sidecar.lock();
         let child = guard.as_mut().ok_or("sidecar not running")?;
         child
             .write(line.as_bytes())
@@ -270,6 +275,20 @@ fn send_message(
     }
 
     Ok(assistant_id)
+}
+
+/// Ask the sidecar for the models the endpoint exposes; the answer comes back
+/// as a `mimo-models` event. Returns the request id.
+#[tauri::command]
+fn list_models(state: State<AppState>) -> Result<String, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let line = format!("{}\n", serde_json::json!({ "id": id, "action": "models" }));
+    let mut guard = state.sidecar.lock();
+    let child = guard.as_mut().ok_or("sidecar not running")?;
+    child
+        .write(line.as_bytes())
+        .map_err(|e| format!("sidecar write failed: {e}"))?;
+    Ok(id)
 }
 
 /// Open a native file picker and return the chosen image/audio file as a
@@ -324,6 +343,8 @@ struct Chunk {
     text: String,
     #[serde(default)]
     message: String,
+    #[serde(default)]
+    models: Vec<String>,
 }
 
 fn spawn_sidecar(app: &AppHandle) {
@@ -343,7 +364,6 @@ fn spawn_sidecar(app: &AppHandle) {
     app.state::<AppState>()
         .sidecar
         .lock()
-        .unwrap()
         .replace(child);
 
     let handle = app.clone();
@@ -370,7 +390,7 @@ fn handle_chunk(app: &AppHandle, chunk: Chunk) {
     match chunk.kind.as_str() {
         "reasoning" | "content" | "text" => {
             {
-                let mut pending = state.pending.lock().unwrap();
+                let mut pending = state.pending.lock();
                 if let Some((_conv, content, reasoning)) = pending.get_mut(&chunk.id) {
                     if chunk.kind == "reasoning" {
                         reasoning.push_str(&chunk.text);
@@ -384,10 +404,17 @@ fn handle_chunk(app: &AppHandle, chunk: Chunk) {
                 serde_json::json!({ "id": chunk.id, "kind": chunk.kind, "text": chunk.text }),
             );
         }
+        "models" => {
+            // Reply to a list_models request: hand the ids straight to the UI.
+            let _ = app.emit(
+                "mimo-models",
+                serde_json::json!({ "id": chunk.id, "models": chunk.models }),
+            );
+        }
         "done" => {
-            let finished = state.pending.lock().unwrap().remove(&chunk.id);
+            let finished = state.pending.lock().remove(&chunk.id);
             if let Some((conv, content, reasoning)) = finished {
-                let db = state.db.lock().unwrap();
+                let db = state.db.lock();
                 let _ = db.execute(
                     "INSERT INTO messages (id, conversation_id, role, content, reasoning, created_at)
                      VALUES (?1, ?2, 'assistant', ?3, ?4, ?5)",
@@ -397,7 +424,7 @@ fn handle_chunk(app: &AppHandle, chunk: Chunk) {
             let _ = app.emit("mimo-done", serde_json::json!({ "id": chunk.id }));
         }
         "error" => {
-            state.pending.lock().unwrap().remove(&chunk.id);
+            state.pending.lock().remove(&chunk.id);
             let _ = app.emit(
                 "mimo-error",
                 serde_json::json!({ "id": chunk.id, "message": chunk.message }),
@@ -439,7 +466,8 @@ pub fn run() {
             delete_conversation,
             get_messages,
             send_message,
-            pick_attachment
+            pick_attachment,
+            list_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running chatmi");

@@ -6,7 +6,10 @@ import { createInterface } from "node:readline";
 
 type Request = {
   id: string;
-  messages: Message[];
+  // "chat" (default) streams a completion; "models" lists the models the
+  // endpoint exposes.
+  action?: "chat" | "models";
+  messages?: Message[];
   opts?: { model?: string; system?: string; temperature?: number };
 };
 
@@ -32,11 +35,33 @@ function hasMultimodal(messages: Message[]): boolean {
   );
 }
 
+// GET /v1/models on the same host the SDK chats against (the SDK only knows
+// chat/messages endpoints). The API key stays here. Models that can't complete
+// a conversation (tts/asr/voice) are filtered out of the chat picker.
+async function handleModels(id: string): Promise<void> {
+  const base = rawUrl ?? "https://api.xiaomimimo.com";
+  const res = await fetch(`${base}/v1/models`, {
+    headers: { Authorization: `Bearer ${process.env.MIMO_API_KEY ?? ""}` },
+  });
+  if (!res.ok) throw new Error(`models list failed: HTTP ${res.status}`);
+  const body = (await res.json()) as { data?: { id: string }[] };
+  const models = (body.data ?? [])
+    .map((m) => m.id)
+    .filter((id) => !id.includes("-tts") && !id.includes("-asr"));
+  emit({ id, type: "models", models });
+  emit({ id, type: "done" });
+}
+
 async function handle(req: Request): Promise<void> {
   try {
+    if (req.action === "models") {
+      await handleModels(req.id);
+      return;
+    }
+    const messages = req.messages ?? [];
     const model =
-      req.opts?.model ?? (hasMultimodal(req.messages) ? "mimo-v2.5" : undefined);
-    const stream = mimo.chatStreamWithReasoning(req.messages, {
+      req.opts?.model ?? (hasMultimodal(messages) ? "mimo-v2.5" : undefined);
+    const stream = mimo.chatStreamWithReasoning(messages, {
       model: model as never,
       system: req.opts?.system,
       temperature: req.opts?.temperature,

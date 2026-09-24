@@ -49,6 +49,11 @@
   type Attachment = { kind: "image" | "audio"; mime: string; data: string; name: string };
   let attachments = $state<Attachment[]>([]);
 
+  // Models the endpoint exposes (minus tts/asr). "" = auto-pick in the sidecar
+  // (mimo-v2.5 for multimodal, SDK default otherwise). Persisted in localStorage.
+  let models = $state<string[]>([]);
+  let model = $state("");
+
   // A stored user message may be a JSON content-array (multimodal). Parse it into
   // { text, parts } for rendering; plain strings pass through as text.
   function parseContent(raw: string): { text: string; parts: Attachment[] } {
@@ -151,8 +156,6 @@
   async function send() {
     const text = input.trim();
     if ((!text && attachments.length === 0) || streamingHere) return;
-    if (!activeId) await newChat();
-    const convId = activeId!;
     const sent = attachments;
     attachments = [];
     input = "";
@@ -179,10 +182,13 @@
     };
 
     try {
+      if (!activeId) await newChat();
+      const convId = activeId!;
       const assistantId: string = await invoke("send_message", {
         conversationId: convId,
         content: text,
         attachments: sent.map(({ kind, mime, data }) => ({ kind, mime, data })),
+        model: model || null,
       });
       // Register the live stream buffer; keyed by the real assistant id.
       streams = {
@@ -203,8 +209,19 @@
     }
   }
 
+  function saveModel() {
+    localStorage.setItem("chatmi.model", model);
+  }
+
   onMount(async () => {
     await loadConversations();
+
+    // Restore the saved model choice, then fill the picker from the endpoint.
+    model = localStorage.getItem("chatmi.model") ?? "";
+    await listen<{ models: string[] }>("mimo-models", (e) => {
+      models = e.payload.models;
+    });
+    await invoke("list_models").catch((err) => (errorMsg = String(err)));
 
     await listen<{ id: string; kind: string; text: string }>("mimo-chunk", (e) => {
       const { id, kind, text } = e.payload;
@@ -257,6 +274,19 @@
           <button class="del" onclick={(e) => removeChat(conv.id, e)} aria-label="delete">×</button>
         </div>
       {/each}
+    </div>
+    <div class="model-bar">
+      <select
+        bind:value={model}
+        onchange={saveModel}
+        aria-label="Model"
+        title="Model used for replies (Auto: mimo-v2.5 with attachments, default otherwise)"
+      >
+        <option value="">Auto</option>
+        {#each models as m (m)}
+          <option value={m}>{m}</option>
+        {/each}
+      </select>
     </div>
   </aside>
 
@@ -406,6 +436,15 @@
   }
   .conv:hover .del { opacity: 1; }
   .del:hover { color: var(--color-danger); }
+
+  .model-bar { margin-top: auto; padding-top: var(--space-2); }
+  .model-bar select {
+    width: 100%; background: var(--color-input); color: var(--color-text);
+    border: 1px solid var(--color-border); border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3); font: inherit; font-size: 0.9rem;
+    transition: border-color var(--transition);
+  }
+  .model-bar select:focus { outline: none; border-color: var(--color-primary); }
 
   /* ---------- chat ---------- */
   .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
